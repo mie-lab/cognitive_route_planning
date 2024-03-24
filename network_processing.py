@@ -1,3 +1,5 @@
+import warnings
+import numpy as np
 import geopandas as gpd
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
@@ -80,7 +82,7 @@ def create_network_graph(edges, source, target):
     return G
 
 
-def set_network_node_attributes(G, edges, nodes):
+def set_network_node_attributes_new(G, edges, nodes):
     """
     Set node attributes from the node and edge datasets by normalizing node attributes and aggregating edge attributes
         on nodes.
@@ -114,6 +116,84 @@ def set_network_node_attributes(G, edges, nodes):
     set_node_attributes_from_df(G, nodes,
                                 ['location', 'degree', 'elevation', 'destinations', 'bedeutung', 'lanes_updated',
                                  'avg_speed', 'bike_lanes'])
+    return G, nodes
+
+
+def set_network_node_attributes(G, edges, nodes):
+    """
+    Set node attributes from the node and edge datasets by normalizing node attributes and aggregating edge attributes
+        on nodes.
+    :param G:  network graph.
+    :param edges: network edge DataFrame.
+    :param nodes: network node DataFrame.
+    :return: network graph and enriched node DataFrame.
+    """
+
+    nodes.set_index("osmid", inplace=True, drop=False)
+
+    # location
+    node_attr_loc = {}
+    # degrees
+    node_degrees = dict(G.degree())
+    min_degree, max_degree = min(node_degrees.values()), max(node_degrees.values())
+    node_degrees = {node: (degree - min_degree) / (max_degree - min_degree) for node, degree in node_degrees.items()}
+    # elevation
+    node_attr_elev = {}
+    min_elev, max_elev = min(nodes['elevation']), max(nodes['elevation'])
+    # destination
+    node_destinations = {}
+    min_dest, max_dest = min(nodes['trips']), max(nodes['trips'])
+    # significance
+    node_significance = {}
+    min_significance, max_significance = min(nodes['bedeutung']), max(nodes['bedeutung'])
+    # lanes
+    node_attr_lanes = {}
+    min_lanes, max_lanes = min(edges['lanes_updated']), max(edges['lanes_updated'])
+    node_attr_bike_lanes = {}
+    # avg_speed
+    node_attr_avg_speed = {}
+    min_speed, max_speed = min(edges['maxspeed']), max(edges['maxspeed'])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+
+        for n in G.nodes():
+            # location
+            node_attr_loc[n] = (nodes.loc[n].geometry.x, nodes.loc[n].geometry.y)
+
+            # avg_speed and lanes counts.
+            node_edges = G.edges(n, data=True)
+            if node_edges:
+                maxspeed = [data['maxspeed'] for _, _, data in G.edges(n, data=True) if 'maxspeed' in data]
+                node_attr_avg_speed[n] = (np.nanmean(maxspeed) - min_speed) / (max_speed - min_speed)
+                lanes = [data['lanes_updated'] for _, _, data in G.edges(n, data=True) if 'lanes_updated' in data]
+                node_attr_lanes[n] = (np.nanmean(lanes) - min_lanes) / (max_lanes - min_lanes)
+                b_lanes = [data['bike_lanes'] for _, _, data in G.edges(n, data=True) if 'bike_lanes' in data]
+                node_attr_bike_lanes[n] = np.nanmean(b_lanes)
+            else:
+                node_attr_avg_speed[n] = np.nan
+
+            # elevations
+            node_attr_elev[n] = (nodes.loc[n, "elevation"] - min_elev) / (max_elev - min_elev)
+            # destinations
+            node_destinations[n] = (nodes.loc[n, "trips"] - min_dest) / (max_dest - min_dest)
+            # significance
+            node_significance[n] = (nodes.loc[n, 'bedeutung'] - min_significance) / \
+                                   (max_significance - min_significance)
+
+    # set attributes
+    nx.set_node_attributes(G, {n: n for n in G.nodes()}, 'node_id')
+
+    nx.set_node_attributes(G, node_degrees, 'degree')
+    nx.set_node_attributes(G, node_attr_loc, "location")
+    nx.set_node_attributes(G, node_attr_avg_speed, "avg_speed")
+    nx.set_node_attributes(G, node_attr_lanes, "lanes_updated")
+    nx.set_node_attributes(G, node_attr_bike_lanes, "bike_lanes")
+
+    nx.set_node_attributes(G, node_attr_elev, "elevation")
+    nx.set_node_attributes(G, node_destinations, 'destinations')
+    nx.set_node_attributes(G, node_significance, 'bedeutung')
+
     return G, nodes
 
 
