@@ -1,0 +1,11 @@
+paths.ini
+*.bat
+*.txt
+__pycache__/
+
+# Ignore PyCharm files
+.idea/
+
+# Ignore Jupyter Notebook files
+notebooks/
+route_*/
