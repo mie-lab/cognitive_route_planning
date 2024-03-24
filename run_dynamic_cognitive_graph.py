@@ -27,11 +27,14 @@ def main():
     significance_path = os.path.abspath(config['paths']['significance'])
     od_path = os.path.abspath(config['paths']['od'])
     out_dir = os.path.abspath(config['paths']['out_dir'])
-    credentials = os.path.abspath(config['paths']['credentials'])
+
+    credentials = os.path.abspath(config['global_variables']['credentials'])
+    trip_id = int(config['global_variables']['trip_id'])
+    scenario = config['global_variables']['scenario']
 
     # dataframe with enriched nodes and edges
     nodes = get_enriched_node_df(node_path, significance_path, od_path)
-    edges = get_enriched_edge_df(edge_path, 'ln_desc_after')
+    edges = get_enriched_edge_df(edge_path, scenario)
 
     # the base with saliency values
     G = create_network_graph(edges, 'source', 'target')
@@ -48,14 +51,11 @@ def main():
     # relevant for later
     minx, miny, maxx, maxy = nodes.total_bounds
     polygon_from_bounds = shapely.box(minx, miny, maxx, maxy)
-
     trips = get_trajectories(credentials)
     trips = filter_trips(trips[trips.within(polygon_from_bounds)], 1000, 5000, 500)
-
     # only for testing
-    trip_ids = [213663, 218658, 265956, 279873, 281980, 287527, 296171, 303317, 322378, 352336, 418952, 432747, 458765]
-    trip_id = 296171
     test_traj = trips[trips['trip_id'] == trip_id]
+
 
     # map-match trajectory to the network.
     traj_path = remove_duplicate_traj_segments(get_trajectory_edges(test_traj, nodes, G))
@@ -76,7 +76,7 @@ def main():
 
     # distance matrix and clustering
     attributes = ['degree', "bedeutung", "avg_speed", 'destinations', 'lanes_updated', 'bike_lanes', 'elevation']
-    distance_matrix = create_distance_matrix(nodes_list, 0., subgraph, attributes)
+    distance_matrix = create_distance_matrix(nodes_list, 0.5, subgraph, attributes)
     Z = linkage(squareform(distance_matrix), method='complete', optimal_ordering=False)
 
     # getting the num
@@ -95,6 +95,14 @@ def main():
     cluster_centroids_1 = get_category_center(subgraph, L1_clusters, nodes_list)
     cluster_centroids_2 = get_category_center(subgraph, L2_clusters, nodes_list)
 
+    # get distorted centroid coordinates
+    shifted_centroids_1 = get_adjusted_category_center(L1_clusters, all_pairs_sp, start_node, subgraph, nodes_list)
+    shifted_centroids_2 = get_adjusted_category_center(L2_clusters, all_pairs_sp, start_node, subgraph, nodes_list)
+
+    # get shifted node locations after implementing the memory distortion models
+    set_shifted_node_location(L1_clusters, subgraph, nodes_list, shifted_centroids_1, 'cluster_1_location')
+    set_shifted_node_location(L2_clusters, subgraph, nodes_list, shifted_centroids_2, 'cluster_2_location')
+
     folder_name = f"route_{trip_id}"
     os.makedirs(folder_name, exist_ok=True)
 
@@ -105,14 +113,17 @@ def main():
 
     # route planning
     while next_node != end_node:
-        cognitive_G = create_abstract_graph(subgraph, cluster_member, all_pairs_sp, max_sp, next_node, visited_nodes=visited_nodes)
+        abstract_graph = create_abstract_graph(subgraph, cluster_member, all_pairs_sp, max_sp, next_node,
+                                               visited_nodes=visited_nodes)
         abstract_graph_v = create_abstract_graph(subgraph, cluster_member, all_pairs_sp, max_sp, next_node)
-        next_node, level_node = get_next_step(cognitive_G, next_node, end_node, all_pairs_sp, cluster_member, subgraph)
-        visited_nodes.append(next_node)
+        focal_point = next_node
+        next_node, level_node = get_next_step(abstract_graph, next_node, end_node, all_pairs_sp, cluster_member,
+                                              subgraph)
+        visited_nodes.append(focal_point)
 
         if level_node is not None:
-            visited_nodes.append(L1_NODE_BASE + cluster_member[next_node][1])
-            visited_nodes.append(L2_NODE_BASE + cluster_member[next_node][2])
+            visited_nodes.append(L1_NODE_BASE + cluster_member[focal_point][1])
+            visited_nodes.append(L2_NODE_BASE + cluster_member[focal_point][2])
         path.append(next_node)
         counter += 1
 
