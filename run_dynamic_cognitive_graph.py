@@ -53,7 +53,8 @@ def main():
     polygon_from_bounds = shapely.box(minx, miny, maxx, maxy)
     trips = get_trajectories(credentials)
     trips = filter_trips(trips[trips.within(polygon_from_bounds)], 1000, 5000, 500)
-    # only for testing
+    print('Trajectories retrieved: ', len(trips))
+    # for testing
     test_traj = trips[trips['trip_id'] == trip_id]
 
 
@@ -73,11 +74,13 @@ def main():
     nodes_list = list(subgraph.nodes())
 
     plot_base_subgraph(subgraph, traj_G, sp_G, hull, out_dir)
+    print(trip_id, 'subgraph constructed.')
 
     # distance matrix and clustering
     attributes = ['degree', "bedeutung", "avg_speed", 'destinations', 'lanes_updated', 'bike_lanes', 'elevation']
     distance_matrix = create_distance_matrix(nodes_list, 0.5, subgraph, attributes)
     Z = linkage(squareform(distance_matrix), method='complete', optimal_ordering=False)
+    print('clustering finished.')
 
     # getting the num
     level_2_cluster_count = np.cbrt(len(nodes_list))
@@ -102,6 +105,7 @@ def main():
     # get shifted node locations after implementing the memory distortion models
     set_shifted_node_location(L1_clusters, subgraph, nodes_list, shifted_centroids_1, 'cluster_1_location')
     set_shifted_node_location(L2_clusters, subgraph, nodes_list, shifted_centroids_2, 'cluster_2_location')
+    print('memory distortion finished.')
 
     folder_name = f"route_{trip_id}"
     os.makedirs(folder_name, exist_ok=True)
@@ -132,6 +136,7 @@ def main():
 
     planned_path_G = create_graph(G, path)
     plot_final_route(subgraph, sp_G, planned_path_G, traj_G, start_node, end_node, out_dir)
+    print('Final route created.')
 
     param = 'saliency'
     sp_saliency = get_metric_values(sp, sp_G, param)

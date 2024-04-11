@@ -3,6 +3,7 @@ import geopandas as gpd
 import networkx as nx
 import shapely
 from shapely.geometry import Point
+import requests
 
 
 def get_trajectories(credentials, crs=3857):
@@ -32,7 +33,7 @@ def get_trajectories(credentials, crs=3857):
     return trips
 
 
-def filter_trips(trip_df, min_trip_ln, max_trip_ln, od_dist):
+def filter_trips(trip_df, min_trip_ln=0, max_trip_ln=float('inf'), od_dist=0):
     """
     Filter trips based on length and origin-destination distance.
     :param trip_df: DataFrame with trajectories.
@@ -41,29 +42,64 @@ def filter_trips(trip_df, min_trip_ln, max_trip_ln, od_dist):
     :param od_dist: Euclidean distance between origin and destination.
     :return: DataFrame with trips that satisfy the conditions.
     """
-    trip_df = trip_df[trip_df['geom'].length > min_trip_ln]
-    trip_df = trip_df[trip_df['geom'].length < max_trip_ln]
-    trip_df = trip_df[
+    proj_trip_df = trip_df.copy().to_crs(3857)
+    proj_trip_df = proj_trip_df[proj_trip_df['geom'].length > min_trip_ln]
+    proj_trip_df = proj_trip_df[proj_trip_df['geom'].length < max_trip_ln]
+    proj_trip_df = proj_trip_df[
         [abs(i.coords[-1][0] - i.coords[0][0]) > od_dist and abs(i.coords[-1][1] - i.coords[0][1]) > od_dist for i in
-         trip_df.geom]]
-    trip_df = trip_df.sort_values(by='user_id')
+         proj_trip_df.geom]]
+    proj_trip_df = proj_trip_df.sort_values(by='user_id')
 
-    return trip_df
+    return proj_trip_df.to_crs(4326)
 
 
-def get_trajectory_edges(traj_df, nodes, graph):
+def get_osrm_matched_nodes(trip):
+    """
+    Get nodes from the OSRM map-matching service.
+    :param trip: cycling trajectory.
+    :param crs: Coordinate Reference System, by default set to 3857 for Zurich.
+    :return: list of nodes map-matched to the input trajectory.
+    """
+
+    api_url = "http://router.project-osrm.org/match/v1"
+    profile = "bike"
+    coordinates = ';'.join([f"{lon},{lat}" for lon, lat in shapely.get_coordinates(trip.geom[trip.index])])
+    steps = "true"
+    geometries = "geojson"
+    overview = "simplified"
+    annotations = "nodes"
+
+    # Constructing the full URL
+    full_url = f"{api_url}/{profile}/{coordinates}?steps={steps}&geometries={geometries}&overview={overview}&annotations={annotations}"
+
+    # Making the GET request
+    response = requests.get(full_url)
+    if response.status_code == 200:
+        data = response.json()
+    else:
+        print("Failed to fetch data from the API. Status code:", response.status_code)
+    points = [Point(x['steps'][0]['maneuver']['location'][0], x['steps'][0]['maneuver']['location'][1]) for x in
+              data['matchings'][0]['legs']]
+
+    return points
+
+def get_trajectory_edges(osm_matched_nodes, nodes, edges, graph):
     """
     Map-match trajectory to network.
-    :param traj_df: cycling trajectory
+    :param edges: network edges df.
+    :param osm_matched_nodes: cycling trajectory
     :param nodes: network nodes df.
     :param graph: network graph.
     :return: list of node ids corresponding to input trajectory
     """
-    # get all points from trajectory in the sequence of trajectory
-    points = [Point(coord) for coord in traj_df.geom.iloc[0].coords]
+
     point_ids = []
-    for point in points:
-        cur_point_id = nodes.loc[shapely.distance(point, nodes['geometry']).sort_values().index[0], 'osmid']
+    for point in osm_matched_nodes:
+        cur_edge_matching = edges.loc[shapely.distance(point, edges['geometry']).sort_values().index[0], :]
+        edge_nodes = (cur_edge_matching['source'], cur_edge_matching['target'])
+        cur_point_id = nodes.loc[
+            shapely.distance(point, nodes.loc[nodes['osmid'].isin(edge_nodes), 'geometry']).sort_values().index[
+                0], 'osmid']
         if cur_point_id not in point_ids:
             point_ids.append(cur_point_id)
 
@@ -71,43 +107,11 @@ def get_trajectory_edges(traj_df, nodes, graph):
     complete_path = []
     for i in range(len(point_ids) - 1):
         path = nx.shortest_path(graph, source=point_ids[i], target=point_ids[i + 1], weight='length')
-        if len(path) > 2:
-            for j in range(len(path) - 1):
-                complete_path.append((path[j], path[j + 1]))
-        else:
-            complete_path.append((path[0], path[1]))
+        for j in range(len(path) - 1):
+            complete_path.append((path[j], path[j + 1]))
+    traj_path = [complete_path[0][0]] + [edge[1] for edge in complete_path]
 
-    complete_path = [complete_path[0][0]] + [edge[1] for edge in complete_path]
-
-    return complete_path
-
-
-def remove_duplicate_traj_segments(main_list):
-    """
-    Remove repeating subset of nodes in the map-matched trajectory.
-    :param main_list: list of node ids map-matched to the trajectory.
-    :return: cleaned up list of node ids for the trajectory.
-    """
-    remove_nodes = []
-    for counter, node in enumerate(main_list):
-        for counter_2, node_2 in enumerate(main_list):
-            if node == node_2 and counter < counter_2:
-                remove_nodes.append([counter, counter_2])
-    sublists_to_remove = []
-    for counter, i in enumerate(remove_nodes):
-        sublists_to_remove.append(main_list[remove_nodes[counter][0]: remove_nodes[counter][1]])
-
-    i = 0
-    while i < len(main_list):
-        removed = False
-        for sublist in sublists_to_remove:
-            if main_list[i:i + len(sublist)] == sublist:
-                del main_list[i:i + len(sublist)]
-                removed = True
-                break
-        if not removed:
-            i += 1
-    return main_list
+    return traj_path
 
 
 def create_graph(G, path):
@@ -145,8 +149,8 @@ def create_base_subgraph(traj, buffer, nodes, G, sp, start_node, end_node, detou
     :param crs: Coordinate Reference System.
     :return: subgraph for the particular trajectory and the corresponding buffered convex hull.
     """
-
-    hull = gpd.GeoDataFrame(geometry=traj.convex_hull.buffer(buffer), crs=crs).reset_index()
+    traj_metric = traj.copy().to_crs(3857)
+    hull = gpd.GeoDataFrame(geometry=traj_metric.convex_hull.buffer(buffer), crs=crs).reset_index().to_crs(4326)
     subgraph = G.subgraph(list(nodes[nodes.within(hull.geometry[0])]['osmid']))
     subgraph_connected = G.subgraph(max(nx.connected_components(subgraph), key=len))
 

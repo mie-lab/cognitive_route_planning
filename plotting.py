@@ -32,7 +32,7 @@ def plot_base_subgraph(subgraph, traj_G, sp_G, hull, out_dir):
     nx.draw_networkx_edges(sp_G, sp_pos, ax=ax, style='--', edge_color='red', width=1.5, arrows=False)
 
     hull.plot(ax=ax, color='None', edgecolor='orange', lw=0.5)
-    ctx.add_basemap(ax, crs='EPSG:3857', source=ctx.providers.Esri.WorldGrayCanvas, zoom='auto')
+    ctx.add_basemap(ax, crs='EPSG:4326', source=ctx.providers.Esri.WorldGrayCanvas, zoom='auto')
     plt.savefig(os.path.join(out_dir, 'base_subgraph.png'))
 
 

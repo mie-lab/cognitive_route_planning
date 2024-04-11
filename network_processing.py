@@ -121,12 +121,10 @@ def set_network_node_attributes_new(G, edges, nodes):
 
 def set_network_node_attributes(G, edges, nodes):
     """
-    Set node attributes from the node and edge datasets by normalizing node attributes and aggregating edge attributes
-        on nodes.
-    :param G:  network graph.
-    :param edges: network edge DataFrame.
-    :param nodes: network node DataFrame.
-    :return: network graph and enriched node DataFrame.
+    :param G: network graph.
+    :param edges: edge DataFrame.
+    :param nodes:  node DataFrame.
+    :return: a network graph with enriched node attributes.
     """
 
     nodes.set_index("osmid", inplace=True, drop=False)
