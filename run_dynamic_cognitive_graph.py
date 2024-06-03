@@ -7,7 +7,7 @@ import shapely
 import configparser
 
 from network_processing import get_enriched_node_df, get_enriched_edge_df, create_network_graph, \
-    set_network_node_attributes, set_cycling_saliency
+    set_node_attributes, set_cycling_saliency
 from trajectory_processing import get_trajectories, filter_trips, get_trajectory_edges, create_graph, \
     create_base_subgraph, remove_duplicate_traj_segments
 from clustering import create_distance_matrix, get_level_clusters
@@ -38,7 +38,7 @@ def main():
 
     # the base with saliency values
     G = create_network_graph(edges, 'source', 'target')
-    G, nodes = set_network_node_attributes(G, edges, nodes)
+    G, nodes = set_node_attributes(G, edges, nodes)
 
     saliency_dict = {'avg_speed': {'factor': 0.2, 'high': 0},
                      'lanes_updated': {'factor': 0.2, 'high': 0},
